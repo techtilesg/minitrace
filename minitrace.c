@@ -133,6 +133,10 @@ double mtr_time_s() {
 	clock_gettime(CLOCK_MONOTONIC, &time); // Linux must use CLOCK_MONOTONIC_RAW due to time warps
 	return time.tv_sec + time.tv_nsec / 1.0e9;
 }
+#elif defined(USING_ROS)
+double mtr_time_s() {
+  return ros::Time::now().toSec();
+}
 #else
 double mtr_time_s() {
 	static time_t start;

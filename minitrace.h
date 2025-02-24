@@ -29,6 +29,10 @@
 #define MINITRACE_EXPORT
 #endif
 
+#if defined(USING_ROS)
+#include <ros/ros.h>
+#endif
+
 // If MTR_ENABLED is not defined, Minitrace does nothing and has near zero overhead.
 // Preferably, set this flag in your build system. If you can't just uncomment this line.
 // #define MTR_ENABLED

@@ -385,6 +385,7 @@ void mtr2_flush() {
 static raw_event_t* begin_raw_event();
 void update_base_ev(raw_event_t *ev, const char *category, const char *name, const char *cname, char ph, void *id);
 static void end_raw_event();
+void update_arg_ev(raw_event_t *ev, mtr2_arg_type arg_type, const char *arg_name, void *arg_value);
 
 void internal_mtr2_raw_event(const char *category, const char *name, char ph, void *id) {
   raw_event_t *ev = begin_raw_event();
@@ -414,22 +415,17 @@ void internal_mtr2_raw_event_arg(const char *category, const char *name, char ph
     return;
 
   update_base_ev(ev, category, name, CNAME_NONE, ph, id);
-  ev->arg_type = arg_type;
-  ev->arg_name = arg_name;
-  switch (arg_type) {
-  case MTR_ARG_TYPE_INT:
-    ev->a_int = (int)(uintptr_t)arg_value;
-    break;
-  case MTR_ARG_TYPE_STRING_CONST:
-    ev->a_str = (const char*)arg_value;
-    break;
-  case MTR_ARG_TYPE_STRING_COPY:
-    ev->a_str = strdup((const char*)arg_value);
-    break;
-  case MTR_ARG_TYPE_NONE:
-    break;
-  }
+  update_arg_ev(ev, arg_type, arg_name, arg_value);
+  end_raw_event();
+}
 
+void internal_mtr2_raw_event_arg_color(const char *category, const char *name, const char *cname, char ph, void *id, mtr2_arg_type arg_type, const char *arg_name, void *arg_value) {
+  raw_event_t *ev = begin_raw_event();
+  if (!ev)
+    return;
+
+  update_base_ev(ev, category, name, cname, ph, id);
+  update_arg_ev(ev, arg_type, arg_name, arg_value);
   end_raw_event();
 }
 
@@ -493,4 +489,22 @@ void update_base_ev(raw_event_t *ev, const char *category, const char *name, con
   }
   ev->tid = cur_thread_id;
   ev->pid = cur_process_id;
+}
+
+void update_arg_ev(raw_event_t *ev, mtr2_arg_type arg_type, const char *arg_name, void *arg_value) {
+  ev->arg_type = arg_type;
+  ev->arg_name = arg_name;
+  switch (arg_type) {
+  case MTR_ARG_TYPE_INT:
+    ev->a_int = (int)(uintptr_t)arg_value;
+    break;
+  case MTR_ARG_TYPE_STRING_CONST:
+    ev->a_str = (const char*)arg_value;
+    break;
+  case MTR_ARG_TYPE_STRING_COPY:
+    ev->a_str = strdup((const char*)arg_value);
+    break;
+  case MTR_ARG_TYPE_NONE:
+    break;
+  }
 }

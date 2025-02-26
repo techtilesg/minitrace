@@ -101,7 +101,7 @@ typedef enum {
 MINITRACE_EXPORT void internal_mtr2_raw_event(const char *category, const char *name, char ph, void *id);
 MINITRACE_EXPORT void internal_mtr2_raw_event_color(const char *category, const char *name, const char *cname, char ph, void *id);
 MINITRACE_EXPORT void internal_mtr2_raw_event_arg(const char *category, const char *name, char ph, void *id, mtr2_arg_type arg_type, const char *arg_name, void *arg_value);
-
+MINITRACE_EXPORT void internal_mtr2_raw_event_arg_color(const char *category, const char *name, const char *cname, char ph, void *id, mtr2_arg_type arg_type, const char *arg_name, void *arg_value);
 #ifdef MTR_ENABLED
 
 // c - category. Can be filtered by in trace viewer (or at least that's the intention).
@@ -148,6 +148,8 @@ MINITRACE_EXPORT void internal_mtr2_raw_event_arg(const char *category, const ch
 #define MTR_INSTANT(c, n) internal_mtr2_raw_event(c, n, 'I', 0)
 #define MTR_INSTANT_C(c, n, aname, astrval) internal_mtr2_raw_event_arg(c, n, 'I', 0, MTR_ARG_TYPE_STRING_CONST, aname, (void *)(astrval))
 #define MTR_INSTANT_I(c, n, aname, aintval) internal_mtr2_raw_event_arg(c, n, 'I', 0, MTR_ARG_TYPE_INT, aname, (void *)(aintval))
+
+#define MTR_INSTANT_C_FAILURE(c, n, aname, astrval) internal_mtr2_raw_event_arg_color(c, n, CNAME_TERRIBLE, 'I', 0, MTR_ARG_TYPE_STRING_CONST, aname, (void *)(astrval))
 
 // Counters (can't do multi-value counters yet)
 #define MTR_COUNTER(c, n, val) internal_mtr2_raw_event_arg(c, n, 'C', 0, MTR_ARG_TYPE_INT, n, (void *)(intptr_t)(val))

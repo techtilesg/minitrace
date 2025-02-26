@@ -375,117 +375,103 @@ void mtr_flush() {
 	mtr_flush_with_state(FALSE);
 }
 
+static raw_event_t* begin_raw_event();
+void update_base_ev(raw_event_t *ev, const char *category, const char *name, const char ph, void *id);
+static void end_raw_event();
+
 void internal_mtr_raw_event(const char *category, const char *name, char ph, void *id) {
-#ifndef MTR_ENABLED
-	return;
-#endif
-	pthread_mutex_lock(&mutex);
-	if (!is_tracing || event_count >= INTERNAL_MINITRACE_BUFFER_SIZE) {
-		pthread_mutex_unlock(&mutex);
-		return;
-	}
-	raw_event_t *ev = &event_buffer[event_count];
-	++event_count;
-	pthread_mutex_lock(&event_mutex);
-	++events_in_progress;
-	pthread_mutex_unlock(&event_mutex);
-	pthread_mutex_unlock(&mutex);
+  raw_event_t *ev = begin_raw_event();
+  if (!ev)
+    return;
 
-	double ts = mtr_time_s();
-	if (!cur_thread_id) {
-		cur_thread_id = get_cur_thread_id();
-	}
-	if (!cur_process_id) {
-		cur_process_id = get_cur_process_id();
-	}
+  update_base_ev(ev, category, name, ph, id);
+  ev->arg_type = MTR_ARG_TYPE_NONE;
 
-#ifdef MTR_COPY_EVENT_CATEGORY_AND_NAME
-	const size_t category_len = strlen(category);
-	ev->cat = malloc(category_len + 1);
-	strcpy(ev->cat, category);
-
-	const size_t name_len = strlen(name);
-	ev->name = malloc(name_len + 1);
-	strcpy(ev->name, name);
-
-#else
-	ev->cat = category;
-	ev->name = name;
-#endif
-
-	ev->id = id;
-	ev->ph = ph;
-	if (ev->ph == 'X') {
-		double x;
-		memcpy(&x, id, sizeof(double));
-		ev->ts = (int64_t)(x * 1000000);
-		ev->a_double = (ts - x) * 1000000;
-	} else {
-		ev->ts = (int64_t)(ts * 1000000);
-	}
-	ev->tid = cur_thread_id;
-	ev->pid = cur_process_id;
-	ev->arg_type = MTR_ARG_TYPE_NONE;
-
-	pthread_mutex_lock(&event_mutex);
-	--events_in_progress;
-	pthread_mutex_unlock(&event_mutex);
+  end_raw_event();
 }
 
 void internal_mtr_raw_event_arg(const char *category, const char *name, char ph, void *id, mtr_arg_type arg_type, const char *arg_name, void *arg_value) {
-#ifndef MTR_ENABLED
-	return;
-#endif
-	pthread_mutex_lock(&mutex);
-	if (!is_tracing || event_count >= INTERNAL_MINITRACE_BUFFER_SIZE) {
-		pthread_mutex_unlock(&mutex);
-		return;
-	}
-	raw_event_t *ev = &event_buffer[event_count];
-	++event_count;
-	pthread_mutex_lock(&event_mutex);
-	++events_in_progress;
-	pthread_mutex_unlock(&event_mutex);
-	pthread_mutex_unlock(&mutex);
+  raw_event_t *ev = begin_raw_event();
+  if (!ev)
+    return;
 
-	if (!cur_thread_id) {
-		cur_thread_id = get_cur_thread_id();
-	}
-	if (!cur_process_id) {
-		cur_process_id = get_cur_process_id();
-	}
-	double ts = mtr_time_s();
+  update_base_ev(ev, category, name, ph, id);
+  ev->arg_type = arg_type;
+  ev->arg_name = arg_name;
+  switch (arg_type) {
+  case MTR_ARG_TYPE_INT:
+    ev->a_int = (int)(uintptr_t)arg_value;
+    break;
+  case MTR_ARG_TYPE_STRING_CONST:
+    ev->a_str = (const char*)arg_value;
+    break;
+  case MTR_ARG_TYPE_STRING_COPY:
+    ev->a_str = strdup((const char*)arg_value);
+    break;
+  case MTR_ARG_TYPE_NONE:
+    break;
+  }
 
-#ifdef MTR_COPY_EVENT_CATEGORY_AND_NAME
-	const size_t category_len = strlen(category);
-	ev->cat = malloc(category_len + 1);
-	strcpy(ev->cat, category);
-
-	const size_t name_len = strlen(name);
-	ev->name = malloc(name_len + 1);
-	strcpy(ev->name, name);
-
-#else
-	ev->cat = category;
-	ev->name = name;
-#endif
-
-	ev->id = id;
-	ev->ts = (int64_t)(ts * 1000000);
-	ev->ph = ph;
-	ev->tid = cur_thread_id;
-	ev->pid = cur_process_id;
-	ev->arg_type = arg_type;
-	ev->arg_name = arg_name;
-	switch (arg_type) {
-	case MTR_ARG_TYPE_INT: ev->a_int = (int)(uintptr_t)arg_value; break;
-	case MTR_ARG_TYPE_STRING_CONST:	ev->a_str = (const char*)arg_value; break;
-	case MTR_ARG_TYPE_STRING_COPY: ev->a_str = strdup((const char*)arg_value); break;
-	case MTR_ARG_TYPE_NONE: break;
-	}
-
-	pthread_mutex_lock(&event_mutex);
-	--events_in_progress;
-	pthread_mutex_unlock(&event_mutex);
+  end_raw_event();
 }
 
+static raw_event_t* begin_raw_event() {
+#ifndef MTR_ENABLED
+  return NULL;
+#endif
+  pthread_mutex_lock(&mutex);
+  if (!is_tracing || event_count >= INTERNAL_MINITRACE_BUFFER_SIZE) {
+    pthread_mutex_unlock(&mutex);
+    return NULL;
+  }
+  raw_event_t *ev = &event_buffer[event_count];
+  event_count++;
+  pthread_mutex_lock(&event_mutex);
+  events_in_progress++;
+  pthread_mutex_unlock(&event_mutex);
+  pthread_mutex_unlock(&mutex);
+  return ev;
+}
+
+static void end_raw_event() {
+  pthread_mutex_lock(&event_mutex);
+  events_in_progress--;
+  pthread_mutex_unlock(&event_mutex);
+}
+
+void update_base_ev(raw_event_t *ev, const char *category, const char *name, const char ph, void *id) {
+  double ts = mtr_time_s();
+  if (!cur_thread_id) {
+    cur_thread_id = get_cur_thread_id();
+  }
+  if (!cur_process_id) {
+    cur_process_id = get_cur_process_id();
+  }
+
+#ifdef MTR_COPY_EVENT_CATEGORY_AND_NAME
+  const size_t category_len = strlen(category);
+  ev->cat = malloc(category_len + 1);
+  strcpy(ev->cat, category);
+
+  const size_t name_len = strlen(name);
+  ev->name = malloc(name_len + 1);
+  strcpy(ev->name, name);
+
+#else
+  ev->cat = category;
+  ev->name = name;
+#endif
+
+  ev->id = id;
+  ev->ph = ph;
+  if (ev->ph == 'X') {
+    double x;
+    memcpy(&x, id, sizeof(double));
+    ev->ts = (int64_t)(x * 1000000);
+    ev->a_double = (ts - x) * 1000000;
+  } else {
+    ev->ts = (int64_t)(ts * 1000000);
+  }
+  ev->tid = cur_thread_id;
+  ev->pid = cur_process_id;
+}

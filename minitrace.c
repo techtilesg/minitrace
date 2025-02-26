@@ -43,12 +43,13 @@
 typedef struct raw_event {
 	const char *name;
 	const char *cat;
+	const char *cname;
 	void *id;
 	int64_t ts;
 	uint32_t pid;
 	uint32_t tid;
 	char ph;
-	mtr_arg_type arg_type;
+	mtr2_arg_type arg_type;
 	const char *arg_name;
 	union {
 		const char *a_str;
@@ -75,13 +76,13 @@ static pthread_mutex_t event_mutex;
 static char *str_pool[100];
 
 // forward declaration
-void mtr_flush_with_state(int);
+void mtr2_flush_with_state(int);
 
 // Tiny portability layer.
 // Exposes:
 //	 get_cur_thread_id()
 //	 get_cur_process_id()
-//	 mtr_time_s()
+//	 mtr2_time_s()
 //	 pthread basics
 #ifdef _WIN32
 static int get_cur_thread_id() {
@@ -93,7 +94,7 @@ static int get_cur_process_id() {
 
 static uint64_t _frequency = 0;
 static uint64_t _starttime = 0;
-double mtr_time_s() {
+double mtr2_time_s() {
 	if (_frequency == 0) {
 		QueryPerformanceFrequency((LARGE_INTEGER*)&_frequency);
 		QueryPerformanceCounter((LARGE_INTEGER*)&_starttime);
@@ -107,13 +108,13 @@ double mtr_time_s() {
 static BOOL WINAPI CtrlHandler(DWORD fdwCtrlType) {
 	if (is_tracing && fdwCtrlType == CTRL_C_EVENT) {
 		printf("Ctrl-C detected! Flushing trace and shutting down.\n\n");
-		mtr_flush();
-		mtr_shutdown();
+		mtr2_flush();
+		mtr2_shutdown();
 	}
 	ExitProcess(1);
 }
 
-void mtr_register_sigint_handler() {
+void mtr2_register_sigint_handler() {
 	// For console apps:
 	SetConsoleCtrlHandler(&CtrlHandler, TRUE);
 }
@@ -128,17 +129,17 @@ static inline int get_cur_process_id() {
 }
 
 #if defined(BLACKBERRY)
-double mtr_time_s() {
+double mtr2_time_s() {
 	struct timespec time;
 	clock_gettime(CLOCK_MONOTONIC, &time); // Linux must use CLOCK_MONOTONIC_RAW due to time warps
 	return time.tv_sec + time.tv_nsec / 1.0e9;
 }
 #elif defined(USING_ROS)
-double mtr_time_s() {
+double mtr2_time_s() {
   return ros::Time::now().toSec();
 }
 #else
-double mtr_time_s() {
+double mtr2_time_s() {
 	static time_t start;
 	struct timeval tv;
 	gettimeofday(&tv, NULL);
@@ -155,14 +156,14 @@ static void termination_handler(int signum) {
 	(void) signum;
 	if (is_tracing) {
 		printf("Ctrl-C detected! Flushing trace and shutting down.\n\n");
-		mtr_flush();
+		mtr2_flush();
 		fwrite("\n]}\n", 1, 4, f);
 		fclose(f);
 	}
 	exit(1);
 }
 
-void mtr_register_sigint_handler() {
+void mtr2_register_sigint_handler() {
 #ifndef MTR_ENABLED
 	return;
 #endif
@@ -173,7 +174,7 @@ void mtr_register_sigint_handler() {
 
 #endif
 
-void mtr_init_from_stream(void *stream) {
+void mtr2_init_from_stream(void *stream) {
 #ifndef MTR_ENABLED
 	return;
 #endif
@@ -185,20 +186,20 @@ void mtr_init_from_stream(void *stream) {
 	f = (FILE *)stream;
 	const char *header = "{\"traceEvents\":[\n";
 	fwrite(header, 1, strlen(header), f);
-	time_offset = (uint64_t)(mtr_time_s() * 1000000);
+	time_offset = (uint64_t)(mtr2_time_s() * 1000000);
 	first_line = 1;
 	pthread_mutex_init(&mutex, 0);
 	pthread_mutex_init(&event_mutex, 0);
 }
 
-void mtr_init(const char *json_file) {
+void mtr2_init(const char *json_file) {
 #ifndef MTR_ENABLED
 	return;
 #endif
-	mtr_init_from_stream(fopen(json_file, "wb"));
+	mtr2_init_from_stream(fopen(json_file, "wb"));
 }
 
-void mtr_shutdown() {
+void mtr2_shutdown() {
 	int i;
 #ifndef MTR_ENABLED
 	return;
@@ -206,7 +207,7 @@ void mtr_shutdown() {
 	pthread_mutex_lock(&mutex);
 	is_tracing = FALSE;
 	pthread_mutex_unlock(&mutex);
-	mtr_flush_with_state(TRUE);
+	mtr2_flush_with_state(TRUE);
 
 	fwrite("\n]}\n", 1, 4, f);
 	fclose(f);
@@ -225,7 +226,7 @@ void mtr_shutdown() {
 	}
 }
 
-const char *mtr_pool_string(const char *str) {
+const char *mtr2_pool_string(const char *str) {
 	int i;
 	for (i = 0; i < STRING_POOL_SIZE; i++) {
 		if (!str_pool[i]) {
@@ -240,7 +241,7 @@ const char *mtr_pool_string(const char *str) {
 	return "string pool full";
 }
 
-void mtr_start() {
+void mtr2_start() {
 #ifndef MTR_ENABLED
 	return;
 #endif
@@ -249,7 +250,7 @@ void mtr_start() {
 	pthread_mutex_unlock(&mutex);
 }
 
-void mtr_stop() {
+void mtr2_stop() {
 #ifndef MTR_ENABLED
 	return;
 #endif
@@ -263,7 +264,7 @@ void mtr_stop() {
 // using double-buffering mechanism.
 // Aware: only one flushing process may be 
 // running at any point of time
-void mtr_flush_with_state(int is_last) {
+void mtr2_flush_with_state(int is_last) {
 #ifndef MTR_ENABLED
 	return;
 #endif
@@ -271,6 +272,7 @@ void mtr_flush_with_state(int is_last) {
 	char linebuf[1024];
 	char arg_buf[1024];
 	char id_buf[256];
+	char cname_buf[256];
 	int event_count_copy = 0;
 	int events_in_progress_copy = 1;
 	raw_event_t *event_buffer_tmp = NULL;
@@ -335,6 +337,11 @@ void mtr_flush_with_state(int is_last) {
 		} else {
 			id_buf[0] = 0;
 		}
+		if (raw->cname && strlen(raw->cname) > 0) {
+			snprintf(cname_buf, ARRAY_SIZE(cname_buf), ",\"cname\":\"%s\"", raw->cname);
+		} else {
+			cname_buf[0] = 0;
+		}
 		const char *cat = raw->cat;
 #ifdef _WIN32
 		// On Windows, we often end up with backslashes in category.
@@ -351,9 +358,9 @@ void mtr_flush_with_state(int is_last) {
 		}
 #endif
 
-		len = snprintf(linebuf, ARRAY_SIZE(linebuf), "%s{\"cat\":\"%s\",\"pid\":%i,\"tid\":%i,\"ts\":%" PRId64 ",\"ph\":\"%c\",\"name\":\"%s\",\"args\":{%s}%s}",
+    len = snprintf(linebuf, ARRAY_SIZE(linebuf), "%s{\"cat\":\"%s\",\"pid\":%i,\"tid\":%i,\"ts\":%" PRId64 ",\"ph\":\"%c\",\"name\":\"%s\",\"args\":{%s}%s%s}",
 				first_line ? "" : ",\n",
-				cat, raw->pid, raw->tid, raw->ts - time_offset, raw->ph, raw->name, arg_buf, id_buf);
+        cat, raw->pid, raw->tid, raw->ts - time_offset, raw->ph, raw->name, arg_buf, id_buf, cname_buf);
 		fwrite(linebuf, 1, len, f);
 		first_line = 0;
 
@@ -371,31 +378,42 @@ void mtr_flush_with_state(int is_last) {
 	pthread_mutex_unlock(&mutex);
 }
 
-void mtr_flush() {
-	mtr_flush_with_state(FALSE);
+void mtr2_flush() {
+	mtr2_flush_with_state(FALSE);
 }
 
 static raw_event_t* begin_raw_event();
-void update_base_ev(raw_event_t *ev, const char *category, const char *name, const char ph, void *id);
+void update_base_ev(raw_event_t *ev, const char *category, const char *name, const char *cname, char ph, void *id);
 static void end_raw_event();
 
-void internal_mtr_raw_event(const char *category, const char *name, char ph, void *id) {
+void internal_mtr2_raw_event(const char *category, const char *name, char ph, void *id) {
   raw_event_t *ev = begin_raw_event();
   if (!ev)
     return;
 
-  update_base_ev(ev, category, name, ph, id);
+  update_base_ev(ev, category, name, CNAME_NONE, ph, id);
   ev->arg_type = MTR_ARG_TYPE_NONE;
 
   end_raw_event();
 }
 
-void internal_mtr_raw_event_arg(const char *category, const char *name, char ph, void *id, mtr_arg_type arg_type, const char *arg_name, void *arg_value) {
+void internal_mtr2_raw_event_color(const char *category, const char *name, const char *cname, char ph, void *id) {
   raw_event_t *ev = begin_raw_event();
   if (!ev)
     return;
 
-  update_base_ev(ev, category, name, ph, id);
+  update_base_ev(ev, category, name, cname, ph, id);
+  ev->arg_type = MTR_ARG_TYPE_NONE;
+
+  end_raw_event();
+}
+
+void internal_mtr2_raw_event_arg(const char *category, const char *name, char ph, void *id, mtr2_arg_type arg_type, const char *arg_name, void *arg_value) {
+  raw_event_t *ev = begin_raw_event();
+  if (!ev)
+    return;
+
+  update_base_ev(ev, category, name, CNAME_NONE, ph, id);
   ev->arg_type = arg_type;
   ev->arg_name = arg_name;
   switch (arg_type) {
@@ -439,8 +457,8 @@ static void end_raw_event() {
   pthread_mutex_unlock(&event_mutex);
 }
 
-void update_base_ev(raw_event_t *ev, const char *category, const char *name, const char ph, void *id) {
-  double ts = mtr_time_s();
+void update_base_ev(raw_event_t *ev, const char *category, const char *name, const char *cname, const char ph, void *id) {
+  double ts = mtr2_time_s();
   if (!cur_thread_id) {
     cur_thread_id = get_cur_thread_id();
   }
@@ -462,6 +480,7 @@ void update_base_ev(raw_event_t *ev, const char *category, const char *name, con
   ev->name = name;
 #endif
 
+  ev->cname = cname;
   ev->id = id;
   ev->ph = ph;
   if (ev->ph == 'X') {

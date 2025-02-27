@@ -357,11 +357,16 @@ void mtr2_flush_with_state(int is_last) {
 			cat = temp;
 		}
 #endif
-
-    len = snprintf(linebuf, ARRAY_SIZE(linebuf), "%s{\"cat\":\"%s\",\"pid\":%i,\"tid\":%i,\"ts\":%" PRId64 ",\"ph\":\"%c\",\"name\":\"%s\",\"args\":{%s}%s%s}",
-				first_line ? "" : ",\n",
-        cat, raw->pid, raw->tid, raw->ts - time_offset, raw->ph, raw->name, arg_buf, id_buf, cname_buf);
-		fwrite(linebuf, 1, len, f);
+    if (raw->arg_type == MTR_ARG_TYPE_NONE) {
+      len = snprintf(linebuf, ARRAY_SIZE(linebuf), "%s{\"cat\":\"%s\",\"pid\":%i,\"tid\":%i,\"ts\":%" PRId64 ",\"ph\":\"%c\",\"name\":\"%s\"%s}",
+        first_line ? "" : ",\n",
+        cat, raw->pid, raw->tid, raw->ts - time_offset, raw->ph, raw->name, id_buf);
+    } else {
+      len = snprintf(linebuf, ARRAY_SIZE(linebuf), "%s{\"cat\":\"%s\",\"pid\":%i,\"tid\":%i,\"ts\":%" PRId64 ",\"ph\":\"%c\",\"name\":\"%s\",\"args\":{%s}%s}",
+        first_line ? "" : ",\n",
+        cat, raw->pid, raw->tid, raw->ts - time_offset, raw->ph, raw->name, arg_buf, id_buf);
+    }
+    fwrite(linebuf, 1, len, f);
 		first_line = 0;
 
 		if (raw->arg_type == MTR_ARG_TYPE_STRING_COPY) {
